@@ -1,124 +1,195 @@
 package main
 
+// SIGUSR1 toggle the pause/resume consumption
 import (
 	"context"
-	"errors"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/Shopify/sarama"
 )
 
-var brokers = []string{
-	"localhost:9095",
-	"localhost:9096",
-	"localhost:9097",
-}
+// Sarama configuration options
+var (
+	brokers  = ""
+	version  = ""
+	group    = ""
+	topics   = ""
+	assignor = ""
+	oldest   = true
+	verbose  = false
+)
 
-var flagNumPart = flag.Int("n", 1, "number of partition (from 1 to n)")
+func init() {
+	flag.StringVar(&brokers, "brokers", "localhost:9095,localhost:9096,localhost:9097", "Kafka bootstrap brokers to connect to, as a comma separated list")
+	flag.StringVar(&group, "group", "conv-make-img", "Kafka consumer group definition")
+	flag.StringVar(&version, "version", "2.1.1", "Kafka cluster version")
+	flag.StringVar(&topics, "topics", "convert_requests", "Kafka topics to be consumed, as a comma separated list")
+	flag.StringVar(&assignor, "assignor", "roundrobin", "Consumer group partition assignment strategy (range, roundrobin, sticky)")
+	flag.BoolVar(&oldest, "oldest", true, "Kafka consumer consume initial offset from oldest")
+	flag.BoolVar(&verbose, "verbose", false, "Sarama logging")
+	flag.Parse()
+
+	if len(brokers) == 0 {
+		panic("no Kafka bootstrap brokers defined, please set the -brokers flag")
+	}
+
+	if len(topics) == 0 {
+		panic("no topics given to be consumed, please set the -topics flag")
+	}
+
+	if len(group) == 0 {
+		panic("no Kafka consumer group defined, please set the -group flag")
+	}
+}
 
 func main() {
-	flag.Parse()
-	if *flagNumPart <= 0 {
-		log.Fatalln("number of partition should start from 1")
+	keepRunning := true
+	log.Println("Starting a new Sarama consumer")
+
+	if verbose {
+		sarama.Logger = log.New(os.Stdout, "[sarama] ", log.LstdFlags)
 	}
 
+	version, err := sarama.ParseKafkaVersion(version)
+	if err != nil {
+		log.Panicf("Error parsing Kafka version: %v", err)
+	}
+
+	/**
+	 * Construct a new Sarama configuration.
+	 * The Kafka cluster version has to be defined before the consumer/producer is initialized.
+	 */
 	config := sarama.NewConfig()
-	config.ClientID = "conv-make-img"
-	config.Consumer.Return.Errors = true
+	config.Version = version
 
-	// Create new consumer
-	convConsumer, err := sarama.NewConsumer(brokers, config)
-	if err != nil {
-		panic(err)
+	switch assignor {
+	case "sticky":
+		config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategySticky
+	case "roundrobin":
+		config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
+	case "range":
+		config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRange
+	default:
+		log.Panicf("Unrecognized consumer group partition assignor: %s", assignor)
 	}
 
-	defer func() {
-		if err := convConsumer.Close(); err != nil {
-			panic(err)
-		}
-	}()
+	if oldest {
+		config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	}
 
-	//topics, _ := convConsumer.Topics()
+	/**
+	 * Setup a new Sarama consumer group
+	 */
+	consumer := Consumer{
+		ready: make(chan bool),
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
-
-	numPart := *flagNumPart - 1
-	messages, errors, err := startConsume(ctx, "convert_requests", numPart, convConsumer)
+	client, err := sarama.NewConsumerGroup(strings.Split(brokers, ","), group, config)
 	if err != nil {
-		log.Fatalln(err.Error())
+		log.Panicf("Error creating consumer group client: %v", err)
 	}
 
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt)
-
-	// Count how many message processed
-	msgCount := 0
-
-	// Get signal for finish
-	done := make(chan struct{})
+	consumptionIsPaused := false
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
-			select {
-			case msg := <-messages:
-				msgCount++
-				fmt.Println("Received messages", string(msg.Key), string(msg.Value))
-			case consumerError := <-errors:
-				msgCount++
-				fmt.Println("Received consumerError ", string(consumerError.Topic), string(consumerError.Partition), consumerError.Err)
-				done <- struct{}{}
-			case <-signals:
-				fmt.Println("Interrupt is detected")
-				done <- struct{}{}
+			// `Consume` should be called inside an infinite loop, when a
+			// server-side rebalance happens, the consumer session will need to be
+			// recreated to get the new claims
+			if err := client.Consume(ctx, strings.Split(topics, ","), &consumer); err != nil {
+				log.Panicf("Error from consumer: %v", err)
 			}
+			// check if context was cancelled, signaling that the consumer should stop
+			if ctx.Err() != nil {
+				return
+			}
+			consumer.ready = make(chan bool)
 		}
 	}()
 
-	<-done
-	cancel()
-	fmt.Println("Processed", msgCount, "messages")
+	<-consumer.ready // Await till the consumer has been set up
+	log.Println("Sarama consumer up and running!...")
 
+	sigusr1 := make(chan os.Signal, 1)
+	signal.Notify(sigusr1, syscall.SIGUSR1)
+
+	sigterm := make(chan os.Signal, 1)
+	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
+
+	for keepRunning {
+		select {
+		case <-ctx.Done():
+			log.Println("terminating: context cancelled")
+			keepRunning = false
+		case <-sigterm:
+			log.Println("terminating: via signal")
+			keepRunning = false
+		case <-sigusr1:
+			toggleConsumptionFlow(client, &consumptionIsPaused)
+		}
+	}
+	cancel()
+	wg.Wait()
+	if err = client.Close(); err != nil {
+		log.Panicf("Error closing client: %v", err)
+	}
 }
 
-func startConsume(ctx context.Context, topic string, numPart int, consumer sarama.Consumer) (msgch chan *sarama.ConsumerMessage, errch chan *sarama.ConsumerError, err error) {
-	msgch = make(chan *sarama.ConsumerMessage)
-	errch = make(chan *sarama.ConsumerError)
-
-	partitions, _ := consumer.Partitions(topic)
-
-	if numPart >= len(partitions) {
-		err = errors.New("nonexistent partition")
-		return
+func toggleConsumptionFlow(client sarama.ConsumerGroup, isPaused *bool) {
+	if *isPaused {
+		client.ResumeAll()
+		log.Println("Resuming consumption")
+	} else {
+		client.PauseAll()
+		log.Println("Pausing consumption")
 	}
 
-	partConsumer, err := consumer.ConsumePartition(topic, partitions[numPart], sarama.OffsetOldest)
-	if nil != err {
-		fmt.Printf("Topic %s Partition: %d of %d", topic, numPart, len(partitions))
-		panic(err)
-	}
+	*isPaused = !*isPaused
+}
 
-	fmt.Println(" Start consuming topic ", topic)
-	go func(ctx context.Context, topic string, consumer sarama.PartitionConsumer) {
-		consuming := true
-		for consuming {
-			select {
-			case <-ctx.Done():
-				fmt.Println("canceled by context")
-				consuming = false
-			case consumerError := <-consumer.Errors():
-				errch <- consumerError
-				fmt.Println("consumerError: ", consumerError.Err)
+// Consumer represents a Sarama consumer group consumer
+type Consumer struct {
+	ready chan bool
+}
 
-			case msg := <-consumer.Messages():
-				msgch <- msg
-				fmt.Println("Got message on topic ", topic, msg.Value)
-			}
+// Setup is run at the beginning of a new session, before ConsumeClaim
+func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
+	// Mark the consumer as ready
+	close(consumer.ready)
+	return nil
+}
+
+// Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
+func (consumer *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+// ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
+func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	// NOTE:
+	// Do not move the code below to a goroutine.
+	// The `ConsumeClaim` itself is called within a goroutine, see:
+	// https://github.com/Shopify/sarama/blob/main/consumer_group.go#L27-L29
+	for {
+		select {
+		case message := <-claim.Messages():
+			log.Printf("Message claimed: value = %s, timestamp = %v, topic = %s", string(message.Value), message.Timestamp, message.Topic)
+			session.MarkMessage(message, "")
+
+		// Should return when `session.Context()` is done.
+		// If not, will raise `ErrRebalanceInProgress` or `read tcp <ip>:<port>: i/o timeout` when kafka rebalance. see:
+		// https://github.com/Shopify/sarama/issues/1192
+		case <-session.Context().Done():
+			return nil
 		}
-
-		fmt.Println("end consuming")
-	}(ctx, topic, partConsumer)
-
-	return
+	}
 }
