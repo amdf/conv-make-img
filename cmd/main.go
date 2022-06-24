@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/Shopify/sarama"
+	"github.com/amdf/conv-make-img/internal/converter"
 	"github.com/amdf/conv-make-img/internal/requests"
 )
 
@@ -57,6 +58,9 @@ func main() {
 	if err != nil {
 		log.Panicf("Error creating consumer group client: %v", err)
 	}
+
+	//TODO: call methods
+	converter.NewTengwarConverter()
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
