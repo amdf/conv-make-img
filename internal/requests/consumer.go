@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/Shopify/sarama"
+	"github.com/amdf/conv-make-img/internal/config"
 	"github.com/amdf/conv-make-img/internal/converter"
 )
 
@@ -18,7 +19,7 @@ type Consumer struct {
 
 // Setup is run at the beginning of a new session, before ConsumeClaim
 func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
-	convAddr := "[::]:50051" //TODO: to config
+	convAddr := config.GetConverterAddress()
 
 	log.Println("consumer Setup - connect to ", convAddr)
 
@@ -65,26 +66,29 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 
 func (consumer *Consumer) makeImage(rawMessage []byte) {
 	if 0 == len(rawMessage) {
+		fmt.Println("makeImage: Empty request")
 		return
 	}
+
 	rq := converter.ConvertRequest{}
 	err := json.Unmarshal(rawMessage, &rq)
-	if err == nil {
-		bytes, err := consumer.conv.MakeImage(context.Background(), rq)
-		if err == nil {
-
-			err = converter.SaveImage(rq.ConvID, bytes)
-
-			if err == nil {
-				fmt.Println("Successfully convert to ", rq.ConvID, "size", len(bytes))
-			}
-		}
-
-		if err != nil {
-			fmt.Println("Convert error:", err.Error())
-		} else {
-			fmt.Println("Unknown request")
-		}
+	if err != nil {
+		fmt.Println("makeImage: Unknown request")
+		return
 	}
 
+	bytes, err := consumer.conv.MakeImage(context.Background(), rq)
+	if err != nil {
+		fmt.Println("MakeImage:", err.Error())
+		return
+	}
+
+	err = converter.SaveImage(rq.ConvID, bytes)
+
+	if err != nil {
+		fmt.Println("Convert error:", err.Error())
+		return
+	}
+
+	fmt.Println("Successfully convert to ", rq.ConvID, "size", len(bytes))
 }

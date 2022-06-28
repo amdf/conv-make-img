@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/Shopify/sarama"
+	"github.com/amdf/conv-make-img/internal/config"
 	"github.com/amdf/conv-make-img/internal/requests"
 )
 
@@ -24,6 +25,10 @@ var (
 )
 
 func main() {
+	if nil != config.Load() {
+		log.Fatal("unable to load configs/config.toml")
+	}
+
 	keepRunning := true
 	log.Println("Starting a new Sarama consumer")
 
