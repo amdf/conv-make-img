@@ -63,7 +63,7 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	}
 }
 
-func (consumer *Consumer) makeImage(rawMessage []byte) (result bool) {
+func (consumer *Consumer) makeImage(rawMessage []byte) {
 	if 0 == len(rawMessage) {
 		return
 	}
@@ -72,13 +72,21 @@ func (consumer *Consumer) makeImage(rawMessage []byte) (result bool) {
 	if err == nil {
 		bytes, err := consumer.conv.MakeImage(context.Background(), rq)
 		if err == nil {
-			fmt.Println("Successfully convert to ", rq.ConvID, "size", len(bytes))
-			result = true
-		} else {
-			fmt.Println("Convert error ", err.Error())
+
+			err = converter.SaveImage(rq.ConvID, bytes)
+
+			if err == nil {
+				fmt.Println("Successfully convert to ", rq.ConvID, "size", len(bytes))
+			}
 		}
-	} else {
-		fmt.Println("Unknown request")
+
+		if err != nil {
+			{
+				fmt.Println("Convert error ", err.Error())
+			}
+		} else {
+			fmt.Println("Unknown request")
+		}
 	}
-	return
+
 }

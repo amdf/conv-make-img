@@ -2,6 +2,7 @@ package converter
 
 import (
 	"context"
+	"os"
 	"time"
 
 	pb "github.com/amdf/conv-make-img/svc"
@@ -9,6 +10,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+const imgDir = "/var/tengwar/img"
 
 type TengwarConverter struct {
 	ClientGRPC pb.TengwarConverterClient
@@ -50,4 +53,9 @@ func (client TengwarConverter) MakeImage(ctx context.Context, rq ConvertRequest)
 	bytes = body.Data
 
 	return
+}
+
+func SaveImage(id string, bytes []byte) error {
+	filename := imgDir + "/" + id + ".png"
+	return os.WriteFile(filename, bytes, 0777)
 }
