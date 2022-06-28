@@ -81,9 +81,7 @@ func (consumer *Consumer) makeImage(rawMessage []byte) {
 		}
 
 		if err != nil {
-			{
-				fmt.Println("Convert error ", err.Error())
-			}
+			fmt.Println("Convert error:", err.Error())
 		} else {
 			fmt.Println("Unknown request")
 		}

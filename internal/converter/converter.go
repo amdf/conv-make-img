@@ -2,6 +2,7 @@ package converter
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
@@ -56,6 +57,17 @@ func (client TengwarConverter) MakeImage(ctx context.Context, rq ConvertRequest)
 }
 
 func SaveImage(id string, bytes []byte) error {
+	if "" == id {
+		return errors.New("empty id!")
+	}
 	filename := imgDir + "/" + id + ".png"
-	return os.WriteFile(filename, bytes, 0777)
+
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(bytes)
+
+	return err
 }
