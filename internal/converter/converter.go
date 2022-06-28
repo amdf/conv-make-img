@@ -2,6 +2,7 @@ package converter
 
 import (
 	"context"
+	"time"
 
 	pb "github.com/amdf/conv-make-img/svc"
 	"google.golang.org/genproto/googleapis/api/httpbody"
@@ -9,15 +10,17 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const svcAddr = "[::]:50051"
-
 type TengwarConverter struct {
 	ClientGRPC pb.TengwarConverterClient
+	ClientConn *grpc.ClientConn
 }
 
-func NewTengwarConverter() (s *TengwarConverter, err error) {
+func NewTengwarConverter(svcAddr string) (s *TengwarConverter, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
+	defer cancel()
+	var conn *grpc.ClientConn
 
-	conn, err := grpc.Dial(svcAddr,
+	conn, err = grpc.DialContext(ctx, svcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
 	)
@@ -25,10 +28,8 @@ func NewTengwarConverter() (s *TengwarConverter, err error) {
 		return
 	}
 
-	//TODO: close conn somewhere?
-
 	c := pb.NewTengwarConverterClient(conn)
-	s = &TengwarConverter{ClientGRPC: c}
+	s = &TengwarConverter{ClientGRPC: c, ClientConn: conn}
 	return
 }
 
