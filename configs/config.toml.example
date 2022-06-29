@@ -1,3 +1,8 @@
 [converter]
-Host     ="localhost"
-Port     ="50051"
+host = "localhost"
+port = "50051"
+
+[consumer]
+topic = "convert_requests"
+group = "conv-make-img"
+brokers = ["localhost:9095", "localhost:9096", "localhost:9097"]

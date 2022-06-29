@@ -25,14 +25,15 @@ func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
 
 	var err error
 	consumer.conv, err = converter.NewTengwarConverter(convAddr)
-	if err == nil {
-		log.Println("success")
-		// Mark the consumer as ready
-		close(consumer.Ready)
-
-		return nil
+	if err != nil {
+		return err
 	}
-	return err
+
+	log.Println("success")
+	// Mark the consumer as ready
+	close(consumer.Ready)
+
+	return nil
 }
 
 // Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited

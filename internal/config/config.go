@@ -10,12 +10,23 @@ const FileName = "configs/config.toml"
 var sc *Config
 
 type Config struct {
-	Conv Converter `toml:"converter"`
+	Converter ConverterCfg `toml:"converter"`
+	Consumer  ConsumerCfg  `toml:"consumer"`
 }
 
-type Converter struct {
-	Host string
-	Port string
+type ConverterCfg struct {
+	Host string `toml:"host"`
+	Port string `toml:"port"`
+}
+
+type ConsumerCfg struct {
+	Topic   string   `toml:"topic"`
+	Group   string   `toml:"group"`
+	Brokers []string `toml:"brokers"`
+}
+
+func Get() *Config {
+	return sc
 }
 
 //Load from file
@@ -30,6 +41,6 @@ func GetConverterAddress() (result string) {
 	if nil == sc {
 		return
 	}
-	cfg := sc.Conv
+	cfg := sc.Converter
 	return cfg.Host + ":" + cfg.Port
 }
