@@ -26,7 +26,7 @@ func main() {
 	keepRunning := true
 	log.Println("Starting a new Sarama consumer")
 
-	if verbose {
+	if config.Get().Consumer.Verbose {
 		sarama.Logger = log.New(os.Stdout, "[sarama] ", log.LstdFlags)
 	}
 

@@ -6,3 +6,4 @@ port = "50051"
 topic = "convert_requests"
 group = "conv-make-img"
 brokers = ["localhost:9095", "localhost:9096", "localhost:9097"]
+verbose = false

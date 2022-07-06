@@ -23,6 +23,7 @@ type ConsumerCfg struct {
 	Topic   string   `toml:"topic"`
 	Group   string   `toml:"group"`
 	Brokers []string `toml:"brokers"`
+	Verbose bool     `toml:"verbose"`
 }
 
 func Get() *Config {
