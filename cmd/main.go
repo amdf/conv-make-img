@@ -72,7 +72,8 @@ func main() {
 	 * Setup a new Sarama consumer group
 	 */
 	consumer := requests.Consumer{
-		Ready: make(chan bool),
+		Ready:  make(chan bool),
+		Tracer: tracer,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

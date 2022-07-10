@@ -15,8 +15,9 @@ import (
 
 // Consumer represents a Sarama consumer group consumer
 type Consumer struct {
-	Ready chan bool
-	conv  *converter.TengwarConverter
+	Ready  chan bool
+	conv   *converter.TengwarConverter
+	Tracer opentracing.Tracer
 }
 
 // Setup is run at the beginning of a new session, before ConsumeClaim
@@ -26,7 +27,10 @@ func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
 	log.Println("consumer Setup - connect to ", convAddr)
 
 	var err error
-	consumer.conv, err = converter.NewTengwarConverter(convAddr)
+	consumer.conv, err = converter.NewTengwarConverter(
+		//consumer.Tracer,
+		opentracing.GlobalTracer(),
+		convAddr)
 	if err != nil {
 		return err
 	}
@@ -57,8 +61,9 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 			tr := opentracing.GlobalTracer().StartSpan("Consume")
 			tags.SpanKindConsumer.Set(tr)
 
+			ctx := opentracing.ContextWithSpan(context.Background(), tr)
 			log.Printf("Message claimed: value = %s, timestamp = %v, topic = %s", string(message.Value), message.Timestamp, message.Topic)
-			consumer.makeImage(tr.Context(), message.Value)
+			consumer.makeImage(ctx, message.Value)
 
 			session.MarkMessage(message, "")
 
@@ -73,10 +78,7 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	}
 }
 
-func (consumer *Consumer) makeImage(ctx opentracing.SpanContext, rawMessage []byte) {
-	tr := opentracing.GlobalTracer().StartSpan(
-		"makeImage", opentracing.ChildOf(ctx))
-	defer tr.Finish()
+func (consumer *Consumer) makeImage(ctx context.Context, rawMessage []byte) {
 	if 0 == len(rawMessage) {
 		fmt.Println("makeImage: Empty request")
 		return
@@ -89,13 +91,13 @@ func (consumer *Consumer) makeImage(ctx opentracing.SpanContext, rawMessage []by
 		return
 	}
 
-	bytes, err := consumer.conv.MakeImage(context.Background(), rq)
+	bytes, err := consumer.conv.MakeImage(ctx, rq)
 	if err != nil {
 		fmt.Println("MakeImage:", err.Error())
 		return
 	}
 
-	err = converter.SaveImage(rq.ConvID, bytes)
+	err = converter.SaveImage(ctx, rq.ConvID, bytes)
 
 	if err != nil {
 		fmt.Println("Convert error:", err.Error())

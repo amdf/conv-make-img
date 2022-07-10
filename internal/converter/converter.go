@@ -7,6 +7,8 @@ import (
 	"time"
 
 	pb "github.com/amdf/conv-make-img/svc"
+	otgrpc "github.com/opentracing-contrib/go-grpc"
+	"github.com/opentracing/opentracing-go"
 	"google.golang.org/genproto/googleapis/api/httpbody"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -19,7 +21,7 @@ type TengwarConverter struct {
 	ClientConn *grpc.ClientConn
 }
 
-func NewTengwarConverter(svcAddr string) (s *TengwarConverter, err error) {
+func NewTengwarConverter(tracer opentracing.Tracer, svcAddr string) (s *TengwarConverter, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
 	defer cancel()
 	var conn *grpc.ClientConn
@@ -27,6 +29,8 @@ func NewTengwarConverter(svcAddr string) (s *TengwarConverter, err error) {
 	conn, err = grpc.DialContext(ctx, svcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
+		grpc.WithUnaryInterceptor(
+			otgrpc.OpenTracingClientInterceptor(tracer)),
 	)
 	if err != nil {
 		return
@@ -56,10 +60,14 @@ func (client TengwarConverter) MakeImage(ctx context.Context, rq ConvertRequest)
 	return
 }
 
-func SaveImage(id string, bytes []byte) error {
+func SaveImage(ctx context.Context, id string, bytes []byte) error {
 	if "" == id {
 		return errors.New("empty id!")
 	}
+	parent := opentracing.SpanFromContext(ctx)
+	sp := opentracing.StartSpan("SaveImage", opentracing.ChildOf(parent.Context()))
+	defer sp.Finish()
+
 	filename := imgDir + "/" + id + ".png"
 
 	f, err := os.Create(filename)
