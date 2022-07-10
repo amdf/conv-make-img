@@ -7,10 +7,14 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/amdf/conv-make-img/internal/config"
 	"github.com/amdf/conv-make-img/internal/requests"
+	opentracing "github.com/opentracing/opentracing-go"
+	jaeger "github.com/uber/jaeger-client-go"
+	jcfg "github.com/uber/jaeger-client-go/config"
 )
 
 // Sarama configuration options
@@ -22,6 +26,26 @@ func main() {
 	if nil != config.Load() {
 		log.Fatal("unable to load configs/config.toml")
 	}
+
+	newjcfg := jcfg.Configuration{
+		Sampler: &jcfg.SamplerConfig{
+			Type:  "const",
+			Param: 1,
+		},
+		Reporter: &jcfg.ReporterConfig{
+			LogSpans:            true,
+			BufferFlushInterval: 1 * time.Second,
+		},
+	}
+	tracer, closer, jerr := newjcfg.New(
+		"conv-make-img",
+		jcfg.Logger(jaeger.StdLogger),
+	)
+	if jerr != nil {
+		log.Fatalln("fail to create tracing", jerr)
+	}
+	opentracing.SetGlobalTracer(tracer)
+	defer closer.Close()
 
 	keepRunning := true
 	log.Println("Starting a new Sarama consumer")

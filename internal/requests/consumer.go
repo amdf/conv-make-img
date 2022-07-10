@@ -9,6 +9,8 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/amdf/conv-make-img/internal/config"
 	"github.com/amdf/conv-make-img/internal/converter"
+	opentracing "github.com/opentracing/opentracing-go"
+	tags "github.com/opentracing/opentracing-go/ext"
 )
 
 // Consumer represents a Sarama consumer group consumer
@@ -52,9 +54,15 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	for {
 		select {
 		case message := <-claim.Messages():
+			tr := opentracing.GlobalTracer().StartSpan("Consume")
+			tags.SpanKindConsumer.Set(tr)
+
 			log.Printf("Message claimed: value = %s, timestamp = %v, topic = %s", string(message.Value), message.Timestamp, message.Topic)
-			consumer.makeImage(message.Value)
+			consumer.makeImage(tr.Context(), message.Value)
+
 			session.MarkMessage(message, "")
+
+			tr.Finish()
 
 		// Should return when `session.Context()` is done.
 		// If not, will raise `ErrRebalanceInProgress` or `read tcp <ip>:<port>: i/o timeout` when kafka rebalance. see:
@@ -65,7 +73,10 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	}
 }
 
-func (consumer *Consumer) makeImage(rawMessage []byte) {
+func (consumer *Consumer) makeImage(ctx opentracing.SpanContext, rawMessage []byte) {
+	tr := opentracing.GlobalTracer().StartSpan(
+		"makeImage", opentracing.ChildOf(ctx))
+	defer tr.Finish()
 	if 0 == len(rawMessage) {
 		fmt.Println("makeImage: Empty request")
 		return
