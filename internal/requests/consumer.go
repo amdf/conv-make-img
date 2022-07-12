@@ -10,6 +10,7 @@ import (
 	"github.com/amdf/conv-make-img/internal/config"
 	"github.com/amdf/conv-make-img/internal/converter"
 	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	tags "github.com/opentracing/opentracing-go/ext"
 )
 
@@ -49,6 +50,14 @@ func (consumer *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
 	return nil
 }
 
+func (consumer *Consumer) headersToMap(dst opentracing.TextMapCarrier, src []*sarama.RecordHeader) {
+	for _, val := range src {
+		if nil != val {
+			dst[string(val.Key)] = string(val.Value)
+		}
+	}
+}
+
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	// NOTE:
@@ -58,7 +67,17 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	for {
 		select {
 		case message := <-claim.Messages():
-			tr := opentracing.GlobalTracer().StartSpan("Consume")
+
+			meta := make(opentracing.TextMapCarrier)
+			//headers to map
+			consumer.headersToMap(meta, message.Headers)
+
+			wireContext, _ := opentracing.GlobalTracer().Extract(opentracing.TextMap, meta)
+
+			// Create the span referring to the RPC client if available.
+			// If wireContext == nil, a root span will be created.
+			tr := opentracing.GlobalTracer().StartSpan("Consume", ext.RPCServerOption(wireContext))
+
 			tags.SpanKindConsumer.Set(tr)
 
 			ctx := opentracing.ContextWithSpan(context.Background(), tr)
